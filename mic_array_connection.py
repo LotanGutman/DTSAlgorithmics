@@ -16,8 +16,9 @@ fig, ax = plt.subplots()
 # sun = SunDisplay(width=600, height=600, title="My Data Sun")
 sun3D = SunDisplay3D()
 
-
 calculated_theta = 0
+
+
 class MicArray:
     def __init__(self, rate=constants.fs, chunk_size=constants.chunk_size):
         self.pyaudio_instance = None
@@ -97,29 +98,23 @@ class MicArray:
             samples_by_channel = samples_by_channel[:,
                                  :self.channels].copy()  # removing the trash 8th channel
 
+            samples_by_channel = samples_by_channel[:, :7]
+            # samples_by_channel = signal_processing.pca_denoise(samples_by_channel)
+
             # filter data
             for i in range(samples_by_channel.shape[1]):
                 samples_by_channel[:, i] = signal_processing.center(samples_by_channel[:, i])
 
+
             # calculate tau and so on
-            strength, calculated_phi, strongest_tau, values, angles = signal_processing.calculate_strengthes(samples_by_channel)
+            strength, calculated_phi, strongest_tau, values, angles, powers = signal_processing.calculate_strengthes(
+                samples_by_channel)
 
-            strongest_tau = strongest_tau/constants.fs # time difference
-            calculated_theta = signal_processing.calculate_phi(strongest_tau)
-            print(calculated_theta*180/np.pi)
+            # again - srot
+            taus = powers / constants.fs
+            calculated_theta = signal_processing.find_theta(taus, calculated_phi)
 
-            """ # again - srot
-            delays = signal_processing.calculate_delays(samples_by_channel)
-            taus = [d/constants.fs for d in delays]
-            try:
-                calculated_theta = signal_processing.calculate_theta(taus, calculated_phi)
-            except Exception as _:
-                calculated_theta = 0
-            # print(taus.T)
-            # print(signal_processing.find(taus)) """
-
-
-            sun3D.update(-calculated_phi, np.pi*3/2 + calculated_theta)
+            sun3D.update(calculated_phi, np.pi/2 - calculated_theta)
 
             # plot stuff:
             mic2_signal = samples_by_channel[:, 0]

@@ -1,9 +1,16 @@
+from collections import deque
+
 import numpy as np
+from numpy.fft import fftfreq
+from scipy.fft import fft
 
 import constants
 from scipy.optimize import minimize_scalar
-from scipy.signal import firwin, freqz
-from scipy.signal.windows import nuttall
+from scipy.signal import fftconvolve
+from scipy.signal.windows import gaussian
+
+thetas = deque([0.0, ], constants.window_len)
+phis = deque([0.0, ], constants.window_len)
 
 
 def circular_avg(num1, num2):
@@ -36,7 +43,7 @@ def sigma(correlationArray):
 
 def center(signal):
     s = signal - np.mean(signal)
-    return BPF(s)
+    return s
 
 def coherence_sum(signal):  # will iterate through all indices; if x[i] < 0, it will add it to x[i +- 3] and zero x[i]
     # return signal
@@ -164,6 +171,8 @@ def calculate_delay(signal1, signal2, interpolate=True):
 
 
 def calculate_strengthes(signals):  # lotan's method
+    global phis
+
     signal0 = np.array(signals[:, 0])
     signals = np.array([signals[:, i] for i in range(1, 7)])  # 1,2,6
     powers = np.zeros(signals.shape[0])
@@ -172,21 +181,16 @@ def calculate_strengthes(signals):  # lotan's method
         signal = signals[i]
         powers[i] = calculate_delay_fourier(signal0, signal) # calculate_delay(signal0, signal)
 
-    # powers = coherence_sum(powers)
-
-    print(powers)
-
     values, angles, strongest_angle, strongest_val = get_TI_angle(powers)
 
-    return powers, strongest_angle, strongest_val, values, angles
+    last_phi = phis[-1]
+    strongest_angle = strongest_angle + np.round((last_phi - strongest_angle) / (2 * np.pi)) * (2 * np.pi)
+    strongest_angle = constants.alpha * strongest_angle + (1 - constants.alpha) * last_phi
+    phis.append(strongest_angle)
 
-
-last_angle = 0
-
+    return powers, strongest_angle, strongest_val, values, angles, powers
 
 def get_TI_angle(values, M=3):
-    global last_angle
-
     angles = constants.angles
 
     # values = values - np.min(values)
@@ -220,8 +224,6 @@ def get_TI_angle(values, M=3):
     strongest_value = f_hat(strongest_angle)
     strongest_angle = strongest_angle % (2 * np.pi)
 
-    last_angle = circular_avg(last_angle, strongest_angle)
-
     if constants.to_show_propability:
         values = [f_hat(angle) for angle in angles]
     else:
@@ -229,70 +231,96 @@ def get_TI_angle(values, M=3):
 
     return values, angles, strongest_angle, strongest_value
 
+def find_theta(taus, phi):
+    global thetas
+    delta = taus*constants.c
+    ang = np.array([0, 1.04719755, 2.0943951, 3.14159265, 4.1887902, 5.23598776])
+    th = np.array([])
+    for i in range(len(ang)):
+        z = np.cos(ang[i] - phi)
+        if abs(z) > 0.1:
+            t = np.arccos(delta[i] / (0.045 * z))
+            th = np.append(th, t)
 
-last_theta = 0
+    count = 0
+    sum = 0
+    for i in th:
+        if not np.isnan(i):
+            count += 1
+            sum += i
 
+    theta = sum/count
 
-def calculate_theta(taus, calculated_phi):
-    global last_theta
+    last_theta = thetas[-1]
+    theta = theta + np.round((last_theta - theta) / (2 * np.pi)) * (2 * np.pi)
+    theta = constants.alpha * theta + (1 - constants.alpha) * last_theta
+    thetas.append(theta)
 
-    thetas = []
-    for i, tau in enumerate(taus):
-        arg = (tau * constants.c) / (constants.r * np.cos(calculated_phi - constants.angles[i]))
-        if abs(arg) <= 1:
-            thetas.append(np.arccos(arg) - np.pi / 2)
-    new_theta = sum(thetas) / len(thetas)
-
-    last_theta = (new_theta + last_theta) / 2
-
-    return last_theta
-
-def calculate_phi(strongest_tau):
-    print(constants.c * strongest_tau / constants.r)
-    return np.arccos(constants.c * strongest_tau / constants.r)
-
-
-
-# Design FIR bandpass filter using nuttall window
-coeffs = firwin(
-    constants.numtaps,
-    [constants.low_cutoff, constants.high_cutoff],
-    window='nuttall',
-    pass_zero=False,
-    fs=constants.fs
-)
-
-def BPF(signal):
-    return signal
-
-    global coeffs
-
-    # Convolve with input signal
-    filtered_signal = np.convolve(signal, coeffs, mode='same')
-
-    return filtered_signal
+    return theta
 
 
-def calculate_delays(signals):
-    output = np.zeros(6)
 
-    for i in range(6):
-        output[i] = calculate_delay(signals[:, 0], signals[:, i + 1])
+def fast_iterative_circular_denoise(y, iterations=20, noise_threshold_percentile=0.15):
+    """Optimized version of iterative circular Gaussian denoising."""
+    y = np.asarray(y)
+    if len(y) < 2:
+        return y
 
-    return output
+    x, y_sin = np.cos(y), np.sin(y)
+
+    # Cache FFT computations
+    def get_noise_cutoff(signal):
+        fft_mag = np.abs(fft(signal - signal.mean()))
+        pos_freqs = fft_mag[(fftfreq(len(y)) > 0) & (fftfreq(len(y)) <= 0.5)]
+        return np.percentile(pos_freqs, noise_threshold_percentile * 100) if len(pos_freqs) else 0
+
+    # Compute initial noise cutoff
+    noise_cutoff = max(get_noise_cutoff(x), get_noise_cutoff(y_sin))
+    if noise_cutoff <= 0:
+        return y
+
+    # Design the filter kernel once (outside iterations)
+    sigma = len(y) / (2 * np.pi * noise_cutoff)
+    kernel_size = min(50, max(3, len(y) // 4))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    kernel = gaussian(kernel_size, sigma)
+    kernel /= kernel.sum()
+    pad_size = kernel_size // 2
+
+    # Pre-allocate buffers
+    buffer_size = len(y) + 2 * pad_size
+    x_buffer = np.empty(buffer_size)
+    y_buffer = np.empty(buffer_size)
+
+    for _ in range(iterations):
+        # Circular padding using buffer views
+        x_buffer[:pad_size] = x[-pad_size:]
+        x_buffer[pad_size:-pad_size] = x
+        x_buffer[-pad_size:] = x[:pad_size]
+
+        y_buffer[:pad_size] = y_sin[-pad_size:]
+        y_buffer[pad_size:-pad_size] = y_sin
+        y_buffer[-pad_size:] = y_sin[:pad_size]
+
+        # FFT-based convolution (faster for larger arrays)
+        x = fftconvolve(x_buffer, kernel, mode='valid')
+        y_sin = fftconvolve(y_buffer, kernel, mode='valid')
+
+    return np.arctan2(y_sin, x)
+
+def pca_denoise(sig, k=1):
+    sig = sig.T
+    mu = sig.mean(axis=1, keepdims=True)
+    xc = sig - mu
+
+    R = xc @ xc.T / xc.shape[1]
+    eigvals, U = np.linalg.eigh(R)      # ascending order
+    U_k = U[:, -k:]                     # last k columns
+
+    P = U_k @ U_k.T
+    denoised = (P @ xc) + mu
+    return denoised.T
 
 
-def find(deltas, mics=constants.mics):  # shrots method
-    m0 = mics[0]
-    M = mics[1:] - m0  # construct M matrix
-
-    MTM = M.T @ M
-    MTd = M.T @ deltas
-
-    # Solve for s
-    s = -np.linalg.solve(MTM, MTd)
-
-    s_normalized = np.pi + np.arctan2(s[1], s[0])
-
-    return s_normalized
 
