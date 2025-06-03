@@ -16,8 +16,9 @@ fig, ax = plt.subplots()
 # sun = SunDisplay(width=600, height=600, title="My Data Sun")
 sun3D = SunDisplay3D()
 
-
 calculated_theta = 0
+
+
 class MicArray:
     def __init__(self, rate=constants.fs, chunk_size=constants.chunk_size):
         self.pyaudio_instance = None
@@ -102,24 +103,20 @@ class MicArray:
                 samples_by_channel[:, i] = signal_processing.center(samples_by_channel[:, i])
 
             # calculate tau and so on
-            strength, calculated_phi, strongest_tau, values, angles = signal_processing.calculate_strengthes(samples_by_channel)
+            strength, calculated_phi, strongest_tau, values, angles, powers = signal_processing.calculate_strengthes(
+                samples_by_channel)
 
-            strongest_tau = strongest_tau/constants.fs # time difference
-            calculated_theta = signal_processing.calculate_phi(strongest_tau)
-            print(calculated_theta*180/np.pi)
+            # again - srot
+            taus = powers / constants.fs
+            calculated_theta = signal_processing.find_theta(taus, calculated_phi)
 
-            """ # again - srot
-            delays = signal_processing.calculate_delays(samples_by_channel)
-            taus = [d/constants.fs for d in delays]
-            try:
-                calculated_theta = signal_processing.calculate_theta(taus, calculated_phi)
-            except Exception as _:
-                calculated_theta = 0
-            # print(taus.T)
-            # print(signal_processing.find(taus)) """
+            if signal_processing.thetas.__len__() > 9:
+                t0 = time.time()
+                signal_processing.thetas = signal_processing.deque(signal_processing.fast_iterative_circular_denoise(list(signal_processing.thetas)), constants.window_len)
+                signal_processing.phis = signal_processing.deque(signal_processing.fast_iterative_circular_denoise(list(signal_processing.phis)), constants.window_len)
+                print(time.time() - t0)
 
-
-            sun3D.update(-calculated_phi, np.pi*3/2 + calculated_theta)
+            sun3D.update(calculated_phi, np.pi/2 - calculated_theta)
 
             # plot stuff:
             mic2_signal = samples_by_channel[:, 0]

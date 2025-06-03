@@ -12,7 +12,9 @@ fs = 48000
 
 chunk_size = 10000
 
-r = 0.045 # [m] = 4.5 [cm]
+window_len = 10
+
+r = 0.04 # [m] = 4.5 [cm]
 num_circular_mics = 6
 angles = linspace(0, 2*pi, num_circular_mics, endpoint=False)
 
