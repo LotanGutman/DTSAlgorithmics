@@ -12,9 +12,11 @@ fs = 48000
 
 chunk_size = 10000
 
-window_len = 10
+window_len = 50
 
 alpha = 0.2
+
+
 
 r = 0.04 # [m] = 4.5 [cm]
 num_circular_mics = 6

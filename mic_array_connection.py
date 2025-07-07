@@ -1,4 +1,5 @@
 import time
+from collections import deque
 
 import numpy as np
 import keyboard
@@ -113,8 +114,18 @@ class MicArray:
             # again - srot
             taus = powers / constants.fs
             calculated_theta = signal_processing.find_theta(taus, calculated_phi)
+            calculated_theta = np.pi/2 - calculated_theta
 
-            sun3D.update(calculated_phi, np.pi/2 - calculated_theta)
+
+            # use polyfit to remove some noise :)
+            """phis = list(signal_processing.phis)
+            calculated_phi = signal_processing.polynomial_lpf(phis)[-1]
+            thetas = list(signal_processing.thetas)
+            calculated_theta = np.pi/2 - signal_processing.polynomial_lpf(thetas)[-1]
+            """
+
+
+            sun3D.update(calculated_phi, calculated_theta)
 
             # plot stuff:
             mic2_signal = samples_by_channel[:, 0]

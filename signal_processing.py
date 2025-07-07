@@ -12,6 +12,9 @@ from scipy.signal.windows import gaussian
 thetas = deque([0.0, ], constants.window_len)
 phis = deque([0.0, ], constants.window_len)
 
+def avg(x):
+    x = list(x)
+    return sum(x) / len(x)
 
 def circular_avg(num1, num2):
     return num2
@@ -249,7 +252,10 @@ def find_theta(taus, phi):
             count += 1
             sum += i
 
-    theta = sum/count
+    try:
+        theta = sum/count
+    except Exception as _:
+        theta = thetas[-1]
 
     last_theta = thetas[-1]
     theta = theta + np.round((last_theta - theta) / (2 * np.pi)) * (2 * np.pi)
@@ -259,55 +265,26 @@ def find_theta(taus, phi):
     return theta
 
 
+def polynomial_lpf(data, window_size=10, poly_order=5):
+    filtered = np.zeros_like(data, dtype=float)
+    half_window = window_size // 2
 
-def fast_iterative_circular_denoise(y, iterations=20, noise_threshold_percentile=0.15):
-    """Optimized version of iterative circular Gaussian denoising."""
-    y = np.asarray(y)
-    if len(y) < 2:
-        return y
+    for i in range(len(data)):
+        # Define window bounds
+        start_idx = max(0, i - half_window)
+        end_idx = min(len(data), i + half_window + 1)
 
-    x, y_sin = np.cos(y), np.sin(y)
+        # Extract window data
+        window_data = data[start_idx:end_idx]
+        window_indices = np.arange(start_idx, end_idx)
 
-    # Cache FFT computations
-    def get_noise_cutoff(signal):
-        fft_mag = np.abs(fft(signal - signal.mean()))
-        pos_freqs = fft_mag[(fftfreq(len(y)) > 0) & (fftfreq(len(y)) <= 0.5)]
-        return np.percentile(pos_freqs, noise_threshold_percentile * 100) if len(pos_freqs) else 0
+        # Fit polynomial to window
+        coeffs = np.polyfit(window_indices, window_data, poly_order)
 
-    # Compute initial noise cutoff
-    noise_cutoff = max(get_noise_cutoff(x), get_noise_cutoff(y_sin))
-    if noise_cutoff <= 0:
-        return y
+        # Evaluate polynomial at current point
+        filtered[i] = np.polyval(coeffs, i)
 
-    # Design the filter kernel once (outside iterations)
-    sigma = len(y) / (2 * np.pi * noise_cutoff)
-    kernel_size = min(50, max(3, len(y) // 4))
-    if kernel_size % 2 == 0:
-        kernel_size += 1
-    kernel = gaussian(kernel_size, sigma)
-    kernel /= kernel.sum()
-    pad_size = kernel_size // 2
-
-    # Pre-allocate buffers
-    buffer_size = len(y) + 2 * pad_size
-    x_buffer = np.empty(buffer_size)
-    y_buffer = np.empty(buffer_size)
-
-    for _ in range(iterations):
-        # Circular padding using buffer views
-        x_buffer[:pad_size] = x[-pad_size:]
-        x_buffer[pad_size:-pad_size] = x
-        x_buffer[-pad_size:] = x[:pad_size]
-
-        y_buffer[:pad_size] = y_sin[-pad_size:]
-        y_buffer[pad_size:-pad_size] = y_sin
-        y_buffer[-pad_size:] = y_sin[:pad_size]
-
-        # FFT-based convolution (faster for larger arrays)
-        x = fftconvolve(x_buffer, kernel, mode='valid')
-        y_sin = fftconvolve(y_buffer, kernel, mode='valid')
-
-    return np.arctan2(y_sin, x)
+    return filtered
 
 def pca_denoise(sig, k=1):
     sig = sig.T
