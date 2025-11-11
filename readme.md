@@ -25,13 +25,17 @@ Using the geometric positions of the microphones placed on the outer circle, one
 $$
 \hat\varphi = \frac{1}{|\Omega|} \sum_{(i,j)\in\Omega} \arccos\left(\frac{c\cdot\tau_{ij}}{d_{ij}\cdot cos(\frac{\theta_i+\theta_j}{2}-\hat\theta)}\right)
 $$
+
 with
+
 $$
 d_{ij} = 2R\cdot sin\left(\frac{\Delta\theta_{ij}}{2}\right)
 $$
+
 where $d_{ij}$ is the distance between the respective microphone pairs $(i,j)$, $\Delta\theta_{ij}$ is the difference between the two microphone angles, R is the mic array radius, and c is the speed of sound.
 
 for simplicity, we only used the center microphone as reference, so the formula changes slightly. The final polar angle estimate is:
+
 $$
 \hat\varphi = \frac{1}{N-1} \sum_{i=1}^{N-1} \arccos\left(\frac{c\cdot\tau_{i0}}{R\cdot cos(\theta_i-\hat\theta)}\right)
 $$
