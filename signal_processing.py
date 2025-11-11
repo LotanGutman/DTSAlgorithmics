@@ -1,68 +1,29 @@
 from collections import deque
 
 import numpy as np
-from numpy.fft import fftfreq
-from scipy.fft import fft
+from scipy.optimize import minimize_scalar
 
 import constants
-from scipy.optimize import minimize_scalar
-from scipy.signal import fftconvolve
-from scipy.signal.windows import gaussian
 
-thetas = deque([0.0, ], constants.window_len)
-phis = deque([0.0, ], constants.window_len)
-
-def avg(x):
-    x = list(x)
-    return sum(x) / len(x)
-
-def circular_avg(num1, num2):
-    return num2
-
-    return (num1 + num2) / 2
-
-    num1 = num1 % (2 * np.pi)
-    num2 = num2 % (2 * np.pi)
-
-    delta = (num2 - num1) % (2 * np.pi)
-    if delta > np.pi:
-        delta -= 2 * np.pi
-
-    # Adjust num2 to be close to num1
-    num2_adjusted = num1 + delta
-
-    # Compute average
-    avg = (num1 + num2_adjusted) / 2
-
-    # Normalize to [0, 2π)
-    return avg % (2 * np.pi)
-
-
-def sigma(correlationArray):
-    no_dc = center(correlationArray)
-    var = np.sum(no_dc ** 2) / (len(no_dc) - 1)
-    return np.sqrt(var)
+thetas = deque([0.0], constants.SMOOTHING_WINDOW_LEN)
+phis = deque([0.0], constants.SMOOTHING_WINDOW_LEN)
 
 
 def center(signal):
-    s = signal - np.mean(signal)
-    return s
-
-def coherence_sum(signal):  # will iterate through all indices; if x[i] < 0, it will add it to x[i +- 3] and zero x[i]
-    # return signal
-
-    for i in range(len(signal)):
-        if signal[i] < 0:
-            signal[(i + 3) % 6] = (signal[(i + 3) % 6] - signal[i]) / 2
-            signal[i] = 0
-    return signal
+    return signal - np.mean(signal)
 
 
 def rms(signal):
     return np.sqrt(np.mean(signal ** 2))
 
 
-def corr(signal1, signal2, n=constants.nnnn):
+def sigma(correlation_array):
+    no_dc = center(correlation_array)
+    var = np.sum(no_dc ** 2) / (len(no_dc) - 1)
+    return np.sqrt(var)
+
+
+def corr(signal1, signal2, n=constants.CORRELATION_WINDOW):
     signal1 = np.asarray(signal1)
     signal2 = np.asarray(signal2)
 
@@ -73,15 +34,40 @@ def corr(signal1, signal2, n=constants.nnnn):
     correlation = np.zeros(2 * n + 1)
 
     for lag in range(-n, n + 1):
-        shifted = np.roll(signal2, lag)  # circular shift
-        correlation[lag + n] = np.dot(signal1, shifted)  # fast inner product
+        shifted = np.roll(signal2, lag)
+        correlation[lag + n] = np.dot(signal1, shifted)
 
     correlation = correlation / (rms(signal1) * rms(signal2) * len(signal1))
 
     return correlation
 
 
-def calculate_delay_fourier(signal1, signal2, interpolate=True, fs=constants.fs):
+def calculate_delay(signal1, signal2, interpolate=True):
+    cc = corr(signal1, signal2)
+
+    if not interpolate:
+        return np.argmax(cc) - constants.CORRELATION_WINDOW
+
+    max_index = np.argmax(cc)
+
+    if 1 <= max_index < len(cc) - 1:
+        y_minus = cc[max_index - 1]
+        y_0 = cc[max_index]
+        y_plus = cc[max_index + 1]
+
+        denom = 2 * (2 * y_0 - y_plus - y_minus)
+        if denom != 0:
+            delta = 0.5 * (y_minus - y_plus) / denom
+        else:
+            delta = 0.0
+    else:
+        delta = 0.0
+
+    delay = (max_index - constants.CORRELATION_WINDOW) + delta
+    return delay
+
+
+def calculate_delay_fourier(signal1, signal2, interpolate=True, fs=constants.SAMPLE_RATE):
     s1 = np.asarray(signal1)
     s2 = np.asarray(signal2)
 
@@ -147,70 +133,21 @@ def calculate_delay_fourier(signal1, signal2, interpolate=True, fs=constants.fs)
     else:
         return delay_samples
 
-def calculate_delay(signal1, signal2, interpolate=True):
-    cc = corr(signal1, signal2)
-
-    if not interpolate:
-        return np.argmax(cc) - constants.nnnn
-
-    max_index = np.argmax(cc)
-
-    # Interpolation around the peak for sub-sample accuracy
-    if 1 <= max_index < len(cc) - 1:
-        y_minus = cc[max_index - 1]
-        y_0 = cc[max_index]
-        y_plus = cc[max_index + 1]
-
-        denom = 2 * (2 * y_0 - y_plus - y_minus)
-        if denom != 0:
-            delta = 0.5 * (y_minus - y_plus) / denom
-        else:
-            delta = 0.0
-    else:
-        delta = 0.0
-
-    delay = (max_index - constants.nnnn) + delta
-    return delay
-
-
-def calculate_strengthes(signals):  # lotan's method
-    global phis
-
-    signal0 = np.array(signals[:, 0])
-    signals = np.array([signals[:, i] for i in range(1, 7)])  # 1,2,6
-    powers = np.zeros(signals.shape[0])
-
-    for i in range(len(signals)):
-        signal = signals[i]
-        powers[i] = calculate_delay_fourier(signal0, signal) # calculate_delay(signal0, signal)
-
-    values, angles, strongest_angle, strongest_val = get_TI_angle(powers)
-
-    last_phi = phis[-1]
-    strongest_angle = strongest_angle + np.round((last_phi - strongest_angle) / (2 * np.pi)) * (2 * np.pi)
-    strongest_angle = constants.alpha * strongest_angle + (1 - constants.alpha) * last_phi
-    phis.append(strongest_angle)
-
-    return powers, strongest_angle, strongest_val, values, angles, powers
 
 def get_TI_angle(values, M=3):
-    angles = constants.angles
+    angles = constants.MIC_ANGLES
 
-    # values = values - np.min(values)
-
-    angles = np.unwrap(angles)  # remove anomalies in angle (not mandatory)
+    angles = np.unwrap(angles)
 
     X = np.ones((len(angles), 1 + 2 * M))
     for n in range(1, M + 1):
         X[:, 2 * n - 1] = np.cos(n * angles)
         X[:, 2 * n] = np.sin(n * angles)
 
-    # Solve LS
     c, _, _, _ = np.linalg.lstsq(X, values, rcond=None)
 
-    # Reconstructed function
     def f_hat(theta):
-        result = c[0] * 0.5  # a0/2 term
+        result = c[0] * 0.5
         for n in range(1, M + 1):
             result += c[2 * n - 1] * np.cos(n * theta) + c[2 * n] * np.sin(n * theta)
         return result
@@ -227,18 +164,41 @@ def get_TI_angle(values, M=3):
     strongest_value = f_hat(strongest_angle)
     strongest_angle = strongest_angle % (2 * np.pi)
 
-    if constants.to_show_propability:
+    if constants.SHOW_PROBABILITY:
         values = [f_hat(angle) for angle in angles]
     else:
         values = None
 
     return values, angles, strongest_angle, strongest_value
 
+
+def calculate_strengthes(signals):  # lotan's method
+    global phis
+
+    signal0 = np.array(signals[:, 0])
+    signals = np.array([signals[:, i] for i in range(1, 7)])
+    powers = np.zeros(signals.shape[0])
+
+    for i in range(len(signals)):
+        signal = signals[i]
+        powers[i] = calculate_delay_fourier(signal0, signal)
+
+    values, angles, strongest_angle, strongest_val = get_TI_angle(powers)
+
+    last_phi = phis[-1]
+    strongest_angle = strongest_angle + np.round((last_phi - strongest_angle) / (2 * np.pi)) * (2 * np.pi)
+    strongest_angle = constants.SMOOTHING_ALPHA * strongest_angle + (1 - constants.SMOOTHING_ALPHA) * last_phi
+    phis.append(strongest_angle)
+
+    return powers, strongest_angle, strongest_val, values, angles, powers
+
+
 def find_theta(taus, phi):
     global thetas
-    delta = taus*constants.c
+    delta = taus * constants.SPEED_OF_SOUND
     ang = np.array([0, 1.04719755, 2.0943951, 3.14159265, 4.1887902, 5.23598776])
     th = np.array([])
+
     for i in range(len(ang)):
         z = np.cos(ang[i] - phi)
         if abs(z) > 0.1:
@@ -246,20 +206,20 @@ def find_theta(taus, phi):
             th = np.append(th, t)
 
     count = 0
-    sum = 0
+    sum_val = 0
     for i in th:
         if not np.isnan(i):
             count += 1
-            sum += i
+            sum_val += i
 
     try:
-        theta = sum/count
-    except Exception as _:
+        theta = sum_val / count
+    except Exception:
         theta = thetas[-1]
 
     last_theta = thetas[-1]
     theta = theta + np.round((last_theta - theta) / (2 * np.pi)) * (2 * np.pi)
-    theta = constants.alpha * theta + (1 - constants.alpha) * last_theta
+    theta = constants.SMOOTHING_ALPHA * theta + (1 - constants.SMOOTHING_ALPHA) * last_theta
     thetas.append(theta)
 
     return theta
@@ -270,21 +230,18 @@ def polynomial_lpf(data, window_size=10, poly_order=5):
     half_window = window_size // 2
 
     for i in range(len(data)):
-        # Define window bounds
         start_idx = max(0, i - half_window)
         end_idx = min(len(data), i + half_window + 1)
 
-        # Extract window data
         window_data = data[start_idx:end_idx]
         window_indices = np.arange(start_idx, end_idx)
 
-        # Fit polynomial to window
         coeffs = np.polyfit(window_indices, window_data, poly_order)
 
-        # Evaluate polynomial at current point
         filtered[i] = np.polyval(coeffs, i)
 
     return filtered
+
 
 def pca_denoise(sig, k=1):
     sig = sig.T
@@ -292,12 +249,9 @@ def pca_denoise(sig, k=1):
     xc = sig - mu
 
     R = xc @ xc.T / xc.shape[1]
-    eigvals, U = np.linalg.eigh(R)      # ascending order
-    U_k = U[:, -k:]                     # last k columns
+    eigvals, U = np.linalg.eigh(R)
+    U_k = U[:, -k:]
 
     P = U_k @ U_k.T
     denoised = (P @ xc) + mu
     return denoised.T
-
-
-
