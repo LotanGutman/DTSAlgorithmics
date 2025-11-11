@@ -53,7 +53,6 @@ class Robot:
 
 
     def sendString(self, command="-1", wait=0):
-        print(command)
         self.ser.write(command.encode())
         if wait > 0:
             time.sleep(wait)

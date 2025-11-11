@@ -19,12 +19,11 @@ class MicArray:
         self.plot_lines = None
         self.fig = None
         self.ax = None
-        self.robot = robot if robot else Robot()
+        self.robot = robot
 
     def _select_mic_device_index(self):
         print("-" * 120)
         print("Available miniDSP non-speaker audio devices:")
-        print("-" * 120)
 
         max_channels = 0
         max_channels_device_index = None
@@ -49,7 +48,6 @@ class MicArray:
 
         print("-" * 120)
         print("Selected device:")
-        print("-" * 120)
         print(f'Audio device: name={max_name}, channels={max_channels}')
 
         return max_channels_device_index
@@ -91,7 +89,6 @@ class MicArray:
 
     def _update_visualization(self, samples_by_channel, calculated_phi, calculated_theta, sun3d):
         sun3d.update(calculated_phi, calculated_theta)
-        self.robot.update(calculated_theta, calculated_phi)
 
         mic2_signal = samples_by_channel[:, 0]
         mic5_signal = samples_by_channel[:, 6]
@@ -110,7 +107,7 @@ class MicArray:
         device_index = self._select_mic_device_index()
 
         self.stream = self.pyaudio_instance.open(
-            format=constants.SAMPLE_FORMAT,
+            format=pyaudio.paInt16,
             channels=self.channels,
             rate=self.sample_rate,
             frames_per_buffer=self.chunk_size,
@@ -120,12 +117,10 @@ class MicArray:
 
         print("-" * 120)
         print("Selected and automatic settings:")
-        print("-" * 120)
         print("Chunk size:", self.chunk_size)
         print("Channels:", self.channels)
         print("-" * 120)
         print("Starting measurements...")
-        print("-" * 120)
 
         self._setup_plot()
         sun3d = SunDisplay3D()
@@ -135,24 +130,16 @@ class MicArray:
                 data = self.stream.read(self.chunk_size)
                 samples_by_channel = self._process_audio_data(data)
                 calculated_phi, calculated_theta = self._calculate_angles(samples_by_channel)
+
+                if self.robot: self.robot.update(calculated_theta, calculated_phi)
                 self._update_visualization(samples_by_channel, calculated_phi, calculated_theta, sun3d)
 
                 if keyboard.is_pressed('w'):
                     break
         finally:
-            print('Finished')
             self.stream.stop_stream()
             self.stream.close()
             self.pyaudio_instance.terminate()
 
         plt.pause(100)
 
-
-def audio_capture():
-    robot = Robot()
-    mic = MicArray(robot=robot)
-    mic.run()
-
-
-if __name__ == '__main__':
-    audio_capture()

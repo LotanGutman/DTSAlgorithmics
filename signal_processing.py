@@ -202,7 +202,7 @@ def find_theta(taus, phi):
     for i in range(len(ang)):
         z = np.cos(ang[i] - phi)
         if abs(z) > 0.1:
-            t = np.arccos(delta[i] / (0.045 * z))
+            t = np.arccos(delta[i] / (constants.MIC_ARRAY_RADIUS * z))
             th = np.append(th, t)
 
     count = 0
