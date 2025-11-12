@@ -123,7 +123,7 @@ class MicArray:
         print("Starting measurements...")
 
         self._setup_plot()
-        sun3d = SunDisplay3D()
+        sun3d = SunDisplay3D(title="3D Drone Localization")
 
         try:
             while True:
